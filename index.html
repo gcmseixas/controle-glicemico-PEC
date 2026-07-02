@@ -58,6 +58,8 @@
         .ref-list a { color: var(--blue-700); text-decoration: none; word-break: break-all; }
 
         .footer { margin-top: 30px; text-align: center; font-size: 11px; color: #7f8c8d; letter-spacing: 0.5px; }
+
+        .config-note { font-size: 12px; color: #7f8c8d; margin-top: -10px; margin-bottom: 15px; }
     </style>
 </head>
 <body>
@@ -100,6 +102,7 @@
 
     <textarea id="outputText" readonly placeholder="O resultado final alinhado aparecerá aqui..."></textarea>
 
+
     <details class="referencias">
         <summary>Referências Bibliográficas</summary>
         <div class="ref-content">
@@ -119,7 +122,29 @@
 
 <script>
     const colLabels = ["JEJUM", "2H PÓS-CAFÉ", "PRÉ-ALMOÇO", "2H PÓS-ALMOÇO", "PRÉ-JANTAR", "2H PÓS-JANTAR", "AO DEITAR", "MADRUGADA"];
-    const FIGURE_SPACE = "\u2007"; 
+
+    const PAD_CHAR = "\u00A0"; // NBSP - confirmado que sobrevive intacto ao salvar/reabrir no PEC
+    const PEC_FONT_SIZE = 13;  // px - calibrado com teste real no PEC (13px foi o que mais alinhou)
+    const PEC_FONT = `${PEC_FONT_SIZE}px Roboto, sans-serif`;
+    const COLUMN_GAP_UNITS = 6; // espaço extra (em unidades de PAD_CHAR) entre colunas
+
+    const _measureCanvas = document.createElement('canvas');
+    const _measureCtx = _measureCanvas.getContext('2d');
+
+    function textWidth(text) {
+        _measureCtx.font = PEC_FONT;
+        return _measureCtx.measureText(text).width;
+    }
+
+    function padTo(text, targetWidth) {
+        let result = text;
+        let guard = 0; // proteção contra loop infinito
+        while (textWidth(result) < targetWidth && guard < 300) {
+            result += PAD_CHAR;
+            guard++;
+        }
+        return result;
+    }
 
     // Função para aplicar a máscara de data DD/MM automaticamente
     function maskDate(input) {
@@ -164,7 +189,10 @@
         }
     }
 
-    function generateText() {
+    async function generateText() {
+        // Garante que a fonte Roboto já esteja carregada antes de medir texto
+        try { await document.fonts.ready; } catch(e) { /* segue mesmo assim */ }
+
         const rows = document.querySelectorAll('#tableBody tr');
         let dataEntries = [];
         let usedCols = new Set();
@@ -183,17 +211,41 @@
 
         if (dataEntries.length === 0) return;
         let colIndexes = Array.from(usedCols).sort((a, b) => a - b);
+
+        // Largura da coluna DATA = maior entre "DATA" e todas as datas preenchidas
+        const padUnitWidth = textWidth(PAD_CHAR) || 1;
+        let dateColWidth = textWidth("DATA");
+        dataEntries.forEach(e => { dateColWidth = Math.max(dateColWidth, textWidth(e.date)); });
+        dateColWidth += padUnitWidth * COLUMN_GAP_UNITS;
+
+        // Largura de cada coluna usada = maior entre o rótulo do cabeçalho e todos os valores da coluna
+        let colWidths = {};
+        colIndexes.forEach(idx => {
+            let w = textWidth(colLabels[idx]);
+            dataEntries.forEach(e => {
+                let val = e.values[idx] || "";
+                w = Math.max(w, textWidth(val));
+            });
+            colWidths[idx] = w + padUnitWidth * COLUMN_GAP_UNITS;
+        });
+
         let finalText = "CONTROLE GLICÊMICO:\n";
-        let headerLine = "DATA" + FIGURE_SPACE.repeat(6);
-        colIndexes.forEach(idx => { headerLine += colLabels[idx] + FIGURE_SPACE.repeat(5); });
+
+        // Cabeçalho
+        let headerLine = padTo("DATA", dateColWidth);
+        colIndexes.forEach((idx, i) => {
+            const isLast = i === colIndexes.length - 1;
+            headerLine += isLast ? colLabels[idx] : padTo(colLabels[idx], colWidths[idx]);
+        });
         finalText += headerLine + "\n";
 
+        // Linhas de dados
         dataEntries.forEach(entry => {
-            let line = entry.date + FIGURE_SPACE.repeat(10 - entry.date.length);
-            colIndexes.forEach(idx => {
-                let val = entry.values[idx] || ""; 
-                let labelWidth = colLabels[idx].length;
-                line += val + FIGURE_SPACE.repeat(labelWidth - val.length + 5);
+            let line = padTo(entry.date, dateColWidth);
+            colIndexes.forEach((idx, i) => {
+                const isLast = i === colIndexes.length - 1;
+                let val = entry.values[idx] || "";
+                line += isLast ? val : padTo(val, colWidths[idx]);
             });
             finalText += line + "\n";
         });
